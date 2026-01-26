@@ -1,8 +1,9 @@
 import os
-
+from dotenv import load_dotenv
+load_dotenv()
 # The address from your terminal output
-CONTRACT_ADDRESS = "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35"
-
+CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS", "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your_api_key_here")
 # Gets the directory where the script is, then goes up one level to the root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ABI_PATH = os.path.join(BASE_DIR, "out", "JusticeVault.sol", "JusticeVault.json")
@@ -11,7 +12,7 @@ ABI_PATH = os.path.join(BASE_DIR, "out", "JusticeVault.sol", "JusticeVault.json"
 RPC_URL = "http://127.0.0.1:8545"
 
 
-GEMINI_API_KEY = "AIzaSyBSjKLlshJeT_kYNi8IFAGK107rUv58DJA"
+
 IPFS_GATEWAY = "https://ipfs.io/ipfs/"
 TEMP_DIR = os.path.join(BASE_DIR, "temp_legal_files")
 
