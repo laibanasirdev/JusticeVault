@@ -1,0 +1,13 @@
+# Ignore sensitive keys and environment files
+.env
+scripts/config.py
+*private_key*
+
+# Ignore temporary AI/IPFS files
+temp_legal_files/
+__pycache__/
+
+# Ignore Foundry/Solidity artifacts
+out/
+lib/
+cache/

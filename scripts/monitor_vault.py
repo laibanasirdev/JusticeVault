@@ -12,7 +12,7 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 with open(ABI_PATH) as f:
     abi = json.load(f)["abi"]
-contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=abi)
+contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=abi)
 def summarize_legal_doc(file_path):
     print(f"🤖 AI is reading the document...")
     max_retries = 3
