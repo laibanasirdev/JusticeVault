@@ -1,12 +1,13 @@
 import json
-import requests
 import os
-import time
 import random
-import hashlib
+import time
+import requests
 from web3 import Web3
 from google import genai
+
 from config import CONTRACT_ADDRESS, ABI_PATH, RPC_URL, GEMINI_API_KEY, IPFS_GATEWAY, TEMP_DIR, FEED_PATH
+from oracle_utils import verify_file_integrity
 
 # 1. Initialize Clients
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
@@ -15,34 +16,6 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 with open(ABI_PATH) as f:
     abi = json.load(f)["abi"]
 contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=abi)
-def verify_file_integrity(file_path, expected_hash_hex):
-    """
-    First Principles: Don't trust the IPFS gateway.
-    Verify the digital fingerprint.
-    """
-    sha256_hash = hashlib.sha256()
-    try:
-        with open(file_path, "rb") as f:
-            # Read in chunks to handle large legal PDFs efficiently
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-
-        actual_hash = sha256_hash.hexdigest()
-
-        # Normalize expected hash (bytes32 from contract may be HexBytes or bytes)
-        if isinstance(expected_hash_hex, bytes):
-            clean_expected = expected_hash_hex.hex()
-        elif hasattr(expected_hash_hex, "hex"):
-            clean_expected = expected_hash_hex.hex()
-        else:
-            clean_expected = str(expected_hash_hex)
-        clean_expected = clean_expected.replace("0x", "").lower()
-        actual_hash = actual_hash.lower()
-
-        return actual_hash == clean_expected
-    except Exception as e:
-        print(f"Error during integrity check: {e}")
-        return False
 
 
 def summarize_legal_doc(file_path):
@@ -56,7 +29,8 @@ def summarize_legal_doc(file_path):
                 response = ai_client.models.generate_content(
                     model="gemini-2.0-flash",
                     contents=[
-                        "You are an expert legal assistant. Summarize this evidence document into 3 bullet points for a judge.",
+                        "You are an expert legal assistant. Produce a formal Judicial Case Brief from this evidence document. "
+"Use this exact structure with bold section labels: **Parties Involved:** (names/roles); **Key Claims:** (main factual or legal claims); **Date of Incident / Relevance:** (dates and why they matter); **Summary:** (2–3 bullet points for the judge).",
                         {"inline_data": {"mime_type": "application/pdf", "data": doc_file.read()}}
                     ]
                 )
