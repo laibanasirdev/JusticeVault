@@ -80,77 +80,104 @@ def _append_to_feed(case_id, index, integrity_verified, ai_summary, file_hash_he
 def handle_event(event):
     case_id = event.args.caseId
     cid = event.args.ipfsCid
-    print(f"\n--- 📂 New Evidence: Case #{case_id} ---")
+    print(f"\n--- 📂 New Event Detected: Case #{case_id} ---")
+    print(f"🔗 IPFS CID: {cid}")
     
-    # Download from IPFS
+    # Download path
     file_url = f"{IPFS_GATEWAY}{cid}"
     local_path = os.path.join(TEMP_DIR, f"case_{case_id}_{cid[:6]}.pdf")
     
+    ai_summary = "Not processed"
+    integrity_verified = False
+
     try:
-        response = requests.get(file_url, timeout=10)
-        with open(local_path, "wb") as f:
-            f.write(response.content)
+        print(f"📡 Downloading from IPFS...")
+        # Reduce timeout to 5s for the demo so it doesn't hang forever
+        response = requests.get(file_url, timeout=5) 
+        
+        if response.status_code == 200:
+            with open(local_path, "wb") as f:
+                f.write(response.content)
+            print(f"📥 Download Complete. Verifying integrity...")
 
-        # Zero Trust: verify file matches on-chain fingerprint before processing
-        if verify_file_integrity(local_path, event.args.fileHash):
-            print("✅ Integrity Verified: Document matches Blockchain Fingerprint.")
-            summary = summarize_legal_doc(local_path)
-            print(f"⚖️ JUDGE'S SUMMARY:\n{summary}")
-            ai_summary = summary
-            integrity_verified = True
+            if verify_file_integrity(local_path, event.args.fileHash):
+                print("✅ Integrity Verified.")
+                summary = summarize_legal_doc(local_path)
+                ai_summary = summary
+                integrity_verified = True
+            else:
+                print("❌ ALERT: TAMPER DETECTED!")
+                ai_summary = "Integrity violation: Summary withheld."
         else:
-            print("❌ ALERT: TAMPER DETECTED! IPFS file does not match Blockchain hash.")
-            ai_summary = "Not available — tamper detected."
-            integrity_verified = False
-
-        # Evidence index: getter is caseRegistry(caseId, index) — loop until out of range
-        index = 0
-        while True:
-            try:
-                contract.functions.caseRegistry(case_id, index).call()
-                index += 1
-            except Exception:
-                break
-        index = index - 1  # last valid index is the evidence we just processed
-        _append_to_feed(
-            case_id, index, integrity_verified, ai_summary,
-            event.args.fileHash, cid,
-        )
+            print(f"⚠️ IPFS Gateway returned {response.status_code}. Using fallback.")
+            ai_summary = "IPFS Download Failed - Gateway Timeout."
 
     except Exception as e:
-        print(f"❌ Error processing document: {e}")
+        print(f"❌ Network/Logic Error: {e}")
+        ai_summary = f"Error during processing: {str(e)}"
+
+    # WE MUST STILL WRITE TO THE FEED EVEN IF DOWNLOAD FAILS
+    print(f"📝 Writing to evidence_feed.json...")
+    
+    # Find the index (Optimized: use a fixed index or just 0 for demo if loop is slow)
+    index = 0
+    try:
+        while True:
+            contract.functions.caseRegistry(case_id, index).call()
+            index += 1
+    except:
+        index = max(0, index - 1)
+
+    _append_to_feed(
+        case_id, index, integrity_verified, ai_summary,
+        event.args.fileHash, cid,
+    )
+    print("✨ Feed updated successfully.")
 
 def log_loop():
-    print("🚀 JusticeVault Oracle: Active and Listening (Stateless Mode)...")
+    print("🚀 JusticeVault Oracle: Active and Listening (Stateless Polling Mode)...")
     
-    # We start from the latest block when the script begins
-    last_processed_block = w3.eth.block_number
+    # 1. Initialize block tracker manually
+    try:
+        # Get the current block number to start from
+        # last_processed_block = w3.eth.block_number
+        last_processed_block = 0
+        print(f"📊 Tracking started from block: {last_processed_block}")
+    except Exception as e:
+        print(f"❌ Connection Error: Is Anvil running at {RPC_URL}?")
+        return
 
     while True:
         try:
-            # Current tip of the chain
+            # 2. Check the current tip of the chain
             current_block = w3.eth.block_number
 
-            if last_processed_block < current_block:
-                # Manually fetch logs between the last block we saw and now
-                # This replaces the 'create_filter' logic
-                new_entries = contract.events.EvidenceFiled.get_logs(
-                    fromBlock=last_processed_block + 1,
-                    toBlock=current_block
+            if current_block > last_processed_block:
+                # 3. Query logs directly via HTTP POST (Stateless)
+                # This replaces 'create_filter' entirely
+                events = contract.events.EvidenceFiled.get_logs(
+                    from_block=last_processed_block + 1,
+                    to_block=current_block
                 )
 
-                for event in new_entries:
+                for event in events:
+                    print(f"📦 New Evidence Found in Block {event['blockNumber']}!")
                     handle_event(event)
                 
-                # Update our bookmark so we don't process the same logs twice
+                # Update our position
                 last_processed_block = current_block
 
-            # Give the CPU a breath (1-2 seconds is standard for local dev)
+            # 4. Wait 2 seconds before checking for new blocks
             time.sleep(2)
 
         except Exception as e:
-            print(f"⚠️ Polling error: {e}")
-            time.sleep(5)
+            # If the error is the 'upgrade' ghost, we ignore it and retry
+            if "upgrade" in str(e).lower():
+                time.sleep(1)
+                continue
+            else:
+                print(f"⚠️ Loop Warning: {e}")
+                time.sleep(5)
 
 if __name__ == "__main__":
     log_loop()
