@@ -121,11 +121,36 @@ def handle_event(event):
         print(f"❌ Error processing document: {e}")
 
 def log_loop():
-    print("Innovative Laiba AI: Active and Listening...")
-    event_filter = contract.events.EvidenceFiled.create_filter(from_block='latest')
+    print("🚀 JusticeVault Oracle: Active and Listening (Stateless Mode)...")
+    
+    # We start from the latest block when the script begins
+    last_processed_block = w3.eth.block_number
+
     while True:
-        for event in event_filter.get_new_entries():
-            handle_event(event)
+        try:
+            # Current tip of the chain
+            current_block = w3.eth.block_number
+
+            if last_processed_block < current_block:
+                # Manually fetch logs between the last block we saw and now
+                # This replaces the 'create_filter' logic
+                new_entries = contract.events.EvidenceFiled.get_logs(
+                    fromBlock=last_processed_block + 1,
+                    toBlock=current_block
+                )
+
+                for event in new_entries:
+                    handle_event(event)
+                
+                # Update our bookmark so we don't process the same logs twice
+                last_processed_block = current_block
+
+            # Give the CPU a breath (1-2 seconds is standard for local dev)
+            time.sleep(2)
+
+        except Exception as e:
+            print(f"⚠️ Polling error: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     log_loop()
