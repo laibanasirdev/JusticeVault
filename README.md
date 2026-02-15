@@ -1,86 +1,80 @@
-JusticeVault: Decentralized Legal AI Oracle
-JusticeVault bridges the gap between decentralized storage and Generative AI. It monitors a Smart Contract for legal evidence filings and automatically generates AI summaries using Google's Gemini 2.0.
+# ⚖️ JusticeVault — Decentralized Legal AI Oracle
 
-📖 **Full usage guide & project details:** see [USAGE.md](USAGE.md) for step-by-step setup, configuration, role hashes, hashing PDFs, and troubleshooting.
+**Problem:** Legal evidence is easy to forge, slow to verify, and expensive to analyze. Courts and firms need a way to trust that a document is unchanged and to get instant, structured intelligence without reading every page.
 
-🛠 Prerequisites
-Foundry (Forge & Cast)
+**Solution:** JusticeVault anchors every document to a blockchain with a tamper-proof fingerprint (SHA-256) and uses AI to produce a formal **Case Brief** (Parties, Key Claims, Date of Incident, Summary). The system **never** summarizes a file until its hash matches the on-chain record — so forgery and tampering are detected, not processed.
 
-Python 3.10+
+---
 
-A Gemini API Key
+## Why This Matters
 
-📥 Installation
-Clone the repository:
+| Risk | JusticeVault Response |
+|------|------------------------|
+| **Evidence tampering** | Document hash is stored on-chain before the AI sees it; the Oracle verifies the downloaded file matches. Mismatch → "Tamper detected," no summary. |
+| **Slow verification** | One transaction records the fingerprint; the Oracle + AI deliver a Case Brief automatically. |
+| **No audit trail** | Every submission and every judicial validation is on-chain and event-driven. |
 
-Bash
-git clone https://github.com/your-username/JusticeVault.git
-cd JusticeVault
-Install Smart Contract Dependencies:
+**In one sentence:** Lawyers file evidence (hash + IPFS link); the chain stores the fingerprint; an Oracle verifies and asks AI for a Case Brief; Judges see **On-Chain Integrity Confirmed** and validate with one click.
 
-Bash
-forge install openzeppelin/openzeppelin-contracts
-Install Python Requirements:
+---
 
-Bash
-pip install -r requirements.txt
-# Or: pip install web3 google-genai requests python-dotenv streamlit
+## Repository Structure (Client-Ready)
 
-🚀 Execution Guide
-1. Start Local Blockchain
-In a dedicated terminal:
+```
+contracts/       # Solidity with NatSpec — access control, evidence registry, events
+scripts/          # Oracle (monitor_vault.py, oracle_utils.py) | UI (streamlit_app.py) | deploy & hash tool
+test/            # Foundry unit tests for JusticeVault
+tests/           # Pytest for Oracle logic (e.g. verify_file_integrity)
+docs/            # System architecture diagram (ARCHITECTURE.md)
+sample_evidence/ # Place 2–3 demo PDFs here; use hash_evidence.py to get SHA-256
+```
 
-Bash
-anvil
-2. Deploy the Contract
-In a new terminal:
+---
 
-Bash
-forge script script/DeployJusticeVault.s.sol:DeployJusticeVault --rpc-url http://127.0.0.1:8545 --broadcast
-Note: Copy the Deployed to: address into scripts/config.py.
+## Quick Start
 
-3. Start the AI Listener
-Bash
-export GEMINI_API_KEY='your_key_here'
-python3 scripts/monitor_vault.py
-4. (Optional) Start the Dashboard
-Run the Streamlit dashboard for Lawyer / Judge / Admin views (role switcher, evidence feed, validate button):
+1. **Clone and install**
+   ```bash
+   git clone https://github.com/your-username/JusticeVault.git && cd JusticeVault
+   forge install openzeppelin/openzeppelin-contracts
+   pip install -r requirements.txt
+   cp .env.example .env   # Set CONTRACT_ADDRESS, GEMINI_API_KEY, PRIVATE_KEY
+   ```
 
-Bash
-streamlit run scripts/streamlit_app.py
-Set CONTRACT_ADDRESS in .env. For signing txs from the app, set PRIVATE_KEY (or LAWYER_PRIVATE_KEY, JUDGE_PRIVATE_KEY, ADMIN_PRIVATE_KEY) in .env.
+2. **Run the stack**
+   - Terminal 1: `anvil`
+   - Terminal 2: `forge script scripts/DeployJusticeVault.s.sol:DeployJusticeVault --rpc-url http://127.0.0.1:8545 --broadcast` → put deployed address in `.env`
+   - Terminal 3: `python scripts/monitor_vault.py` (Oracle)
+   - Terminal 4: `streamlit run scripts/streamlit_app.py` (Dashboard)
 
-5. Simulate a Filing
-Use cast to grant permissions and submit evidence:
+3. **Demo with real PDFs**
+   - Add PDFs to `sample_evidence/`; run `python scripts/hash_evidence.py sample_evidence/yourfile.pdf`
+   - Upload the PDF to IPFS (e.g. Pinata), then submit via Lawyer portal (case ID + hash + CID)
+   - In Judge view, see **On-Chain Integrity Confirmed** and the Case Brief; click Validate
 
-Bash
-# Grant Lawyer Role
-cast send <CONTRACT_ADDR> "grantRole(bytes32,address)" <ROLE_HASH> <YOUR_ADDR> --private-key <PK> --rpc-url http://127.0.0.1:8545
+📖 **Full usage, role hashes, and troubleshooting:** [USAGE.md](USAGE.md)  
+🏗 **System diagram and data flow:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-# Submit Evidence
-cast send <CONTRACT_ADDR> "submitEvidence(uint256,bytes32,string)" 101 <HASH> "QmXoyp..." --private-key <PK> --rpc-url http://127.0.0.1:8545
+---
 
-6. Judge Validates Evidence (Human-in-the-Loop)
-After the AI summary is generated, a Judge can officially validate the evidence on-chain:
+## Tests (Reliability)
 
-Bash
-# Grant Judge Role (as admin)
-cast send <CONTRACT_ADDR> "grantRole(bytes32,address)" $(cast keccak "JUDGE_ROLE") <JUDGE_ADDR> --private-key <ADMIN_PK> --rpc-url http://127.0.0.1:8545
+- **Contract:** `forge test` (Foundry tests in `test/JusticeVault.t.sol`)
+- **Oracle logic:** `pytest tests/` (e.g. `verify_file_integrity` in `tests/test_oracle.py`)
 
-# Judge validates the first piece of evidence for Case 101 (index 0)
-cast send <CONTRACT_ADDR> "validateEvidence(uint256,uint256)" 101 0 --private-key <JUDGE_PRIVATE_KEY> --rpc-url http://127.0.0.1:8545
+---
 
-🏗 System Architecture
-The system consists of three layers:
+## Tech Stack
 
-The Vault (Solidity): Logic for access control and event emission.
+| Layer | Role |
+|-------|------|
+| **Integrity** | Solidity (Foundry), Anvil — evidence registry, roles, events |
+| **Logic** | Python, Web3.py — event listener, IPFS download, hash check |
+| **Intelligence** | Google Gemini 2.0 — formal Case Brief (Parties, Key Claims, Date, Summary) |
+| **Storage** | IPFS — decentralized document storage |
 
-The Monitor (Python): Uses Web3.py to poll logs and manage IPFS downloads.
+---
 
-The Intelligence (Gemini): Processes PDF binary data with a built-in Retry-Logic pattern to handle 429 RESOURCE_EXHAUSTED errors.
+## License
 
-🔄 The Legal Loop (End-to-End)
-1. **Lawyer:** Uploads PDF to IPFS → gets CID. Calls `submitEvidence(caseId, hash, cid)`. Contract emits `EvidenceFiled`.
-2. **Python Oracle:** Listens for the event → downloads from IPFS → verifies hash (Zero Trust) → summarizes via Gemini (exponential backoff).
-3. **Judge:** Reads the AI summary in their dashboard.
-4. **Judge:** Calls `validateEvidence(caseId, index)`. Evidence is permanently marked validated on-chain; `EvidenceValidated` event is emitted.
+MIT

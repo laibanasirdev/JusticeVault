@@ -11,3 +11,7 @@ __pycache__/
 out/
 lib/
 cache/
+
+# Ensure Streamlit config is tracked, but ignore its internal credentials
+!.streamlit/config.toml
+.streamlit/credentials.toml

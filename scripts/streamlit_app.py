@@ -24,6 +24,15 @@ from config import (
 
 # --- Page config & layout ---
 st.set_page_config(page_title="JusticeVault", page_icon="⚖️", layout="wide")
+
+# Legal Blue accent for key elements (badges, borders)
+st.markdown("""
+<style>
+    .integrity-badge { padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: #0d5c2e; color: white; font-weight: 600; }
+    .tamper-badge { padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: #8b1a1a; color: white; font-weight: 600; }
+    .case-brief-box { background: #1A1D24; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #1E3A5F; margin: 0.5rem 0; }
+</style>
+""", unsafe_allow_html=True)
 st.title("⚖️ JusticeVault — Decentralized Legal AI Oracle")
 
 # --- Web3 setup ---
@@ -173,12 +182,15 @@ elif role == "Judge":
     if not w3 or not w3.is_connected():
         st.warning("Connect to chain (e.g. start Anvil) to load evidence.")
     else:
-        evidence_list = get_evidence_list(contract, case_id_input)
+        with st.status("Loading evidence from chain...", expanded=False) as status:
+            evidence_list = get_evidence_list(contract, case_id_input)
+            status.update(label="Evidence loaded", state="complete")
 
         if not evidence_list:
             st.info(f"No evidence on-chain for Case #{case_id_input} yet.")
         else:
-            st.subheader("Evidence Feed")
+            st.subheader("Evidence History")
+            st.caption(f"All evidence filed for Case #{case_id_input} — review and validate below.")
             feed = load_feed()
 
             for idx, ev in enumerate(evidence_list):
@@ -198,25 +210,25 @@ elif role == "Judge":
                         st.caption(f"Hash: `{hash_short}` · Lawyer: `{lawyer[:10]}…`")
                     with col2:
                         if integrity_verified is True:
-                            st.markdown("🛡️ **Blockchain Verified**")
-                            st.caption("Integrity: OK")
+                            st.markdown('<span class="integrity-badge">✅ On-Chain Integrity Confirmed</span>', unsafe_allow_html=True)
+                            st.caption("Document hash matches blockchain fingerprint.")
                         elif integrity_verified is False:
-                            st.markdown("⚠️ **Tamper detected**")
-                            st.caption("Integrity: Failed")
+                            st.markdown('<span class="tamper-badge">⚠️ Tamper detected</span>', unsafe_allow_html=True)
+                            st.caption("Hash mismatch — do not rely on this file.")
                         else:
-                            st.caption("⏳ Pending Oracle")
+                            st.caption("⏳ Pending Oracle — waiting for AI analysis.")
                     with col3:
                         if isValidated:
                             st.success("Validated ✓")
                         else:
                             st.caption("Not validated")
 
-                    # Summary card (highlight style)
+                    # Case Brief card (highlight style)
                     if ai_summary:
-                        st.markdown("**AI Brief:**")
-                        st.markdown(f"<div style='background:#f0f2f6; padding:0.75rem; border-radius:0.5rem; margin-bottom:0.5rem;'>{ai_summary.replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
+                        st.markdown("**Case Brief**")
+                        st.markdown(f"<div class='case-brief-box'>{ai_summary.replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
                     else:
-                        st.caption("_No AI summary yet (Oracle may still be processing)._")
+                        st.caption("_No Case Brief yet (Oracle may still be processing)._")
 
                     # Validate button (only if not already validated)
                     if not isValidated:
