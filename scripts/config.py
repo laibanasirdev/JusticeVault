@@ -19,3 +19,6 @@ TEMP_DIR = os.path.join(BASE_DIR, "temp_legal_files")
 # Ensure the temp directory exists
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
+
+# Evidence feed for dashboard: Oracle writes integrity + AI summary here
+FEED_PATH = os.path.join(BASE_DIR, "evidence_feed.json")
