@@ -1,183 +1,161 @@
 import json
 import os
-import random
+import sys
 import time
-import requests
+import anthropic
 from web3 import Web3
-from google import genai
 
-from config import CONTRACT_ADDRESS, ABI_PATH, RPC_URL, GEMINI_API_KEY, IPFS_GATEWAY, TEMP_DIR, FEED_PATH
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline.graph import build_graph, PipelineState
+from pipeline.observability import configure_tracing
 from oracle_utils import verify_file_integrity
+from config import CONTRACT_ADDRESS, ABI_PATH, RPC_URL, ANTHROPIC_API_KEY, FEED_PATH
 
-# 1. Initialize Clients
+# ---------------------------------------------------------------------------
+# Clients & contract
+# ---------------------------------------------------------------------------
+configure_tracing()
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
+ai_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 with open(ABI_PATH) as f:
     abi = json.load(f)["abi"]
 contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=abi)
 
-
-def summarize_legal_doc(file_path):
-    print(f"🤖 AI is reading the document...")
-    attempts = 0
-    max_attempts = 5
-
-    while attempts < max_attempts:
-        try:
-            with open(file_path, "rb") as doc_file:
-                response = ai_client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=[
-                        "You are an expert legal assistant. Produce a formal Judicial Case Brief from this evidence document. "
-"Use this exact structure with bold section labels: **Parties Involved:** (names/roles); **Key Claims:** (main factual or legal claims); **Date of Incident / Relevance:** (dates and why they matter); **Summary:** (2–3 bullet points for the judge).",
-                        {"inline_data": {"mime_type": "application/pdf", "data": doc_file.read()}}
-                    ]
-                )
-            return response.text
-
-        except Exception as e:
-            if "429" in str(e):  # Rate limit hit
-                attempts += 1
-                # Exponential backoff: 2, 4, 8, 16, 32 seconds + jitter
-                wait_time = (2 ** attempts) + random.random()
-                print(f"⏳ Rate limit hit. Attempt {attempts}/{max_attempts}. Retrying in {wait_time:.2f}s...")
-                time.sleep(wait_time)
-            else:
-                print(f"❌ Unexpected AI Error: {e}")
-                raise e
-
-    return "❌ Error: Maximum AI retry attempts reached."
+# Compile the LangGraph pipeline once at startup
+pipeline_graph = build_graph(ai_client, verify_file_integrity)
 
 
-def _append_to_feed(case_id, index, integrity_verified, ai_summary, file_hash_hex, ipfs_cid):
-    """Write oracle result to evidence feed for the dashboard."""
+# ---------------------------------------------------------------------------
+# Feed writer
+# ---------------------------------------------------------------------------
+
+def _append_to_feed(state: PipelineState, evidence_index: int) -> None:
     try:
-        file_hash_str = file_hash_hex.hex() if hasattr(file_hash_hex, "hex") else str(file_hash_hex)
         entry = {
-            "caseId": case_id,
-            "index": index,
-            "integrity_verified": integrity_verified,
-            "ai_summary": ai_summary,
+            "caseId":             state["case_id"],
+            "index":              evidence_index,
+            "status":             state["status"],
+            "integrity_verified": state["integrity_verified"],
+            "ai_summary":         state["ai_brief"] or state.get("error", ""),
+            "pii_flags":          state["pii_flags"],
+            "chunk_count":        state["chunk_count"],
             "timestamp_processed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "file_hash_hex": file_hash_str,
-            "ipfs_cid": ipfs_cid,
+            "file_hash_hex":      state["file_hash"].hex() if hasattr(state["file_hash"], "hex") else str(state["file_hash"]),
+            "ipfs_cid":           state["ipfs_cid"],
         }
         feed = []
         if os.path.exists(FEED_PATH):
             try:
-                with open(FEED_PATH, "r") as f:
+                with open(FEED_PATH) as f:
                     feed = json.load(f)
             except (json.JSONDecodeError, IOError):
                 feed = []
         feed.append(entry)
         with open(FEED_PATH, "w") as f:
             json.dump(feed, f, indent=2)
-    except Exception as e:
-        print(f"Warning: could not write feed: {e}")
+    except Exception as exc:
+        print(f"Warning: could not write feed: {exc}")
 
 
-def handle_event(event):
-    case_id = event.args.caseId
-    cid = event.args.ipfsCid
-    print(f"\n--- 📂 New Event Detected: Case #{case_id} ---")
-    print(f"🔗 IPFS CID: {cid}")
-    
-    # Download path
-    file_url = f"{IPFS_GATEWAY}{cid}"
-    local_path = os.path.join(TEMP_DIR, f"case_{case_id}_{cid[:6]}.pdf")
-    
-    ai_summary = "Not processed"
-    integrity_verified = False
-
-    try:
-        print(f"📡 Downloading from IPFS...")
-        # Reduce timeout to 5s for the demo so it doesn't hang forever
-        response = requests.get(file_url, timeout=5) 
-        
-        if response.status_code == 200:
-            with open(local_path, "wb") as f:
-                f.write(response.content)
-            print(f"📥 Download Complete. Verifying integrity...")
-
-            if verify_file_integrity(local_path, event.args.fileHash):
-                print("✅ Integrity Verified.")
-                summary = summarize_legal_doc(local_path)
-                ai_summary = summary
-                integrity_verified = True
-            else:
-                print("❌ ALERT: TAMPER DETECTED!")
-                ai_summary = "Integrity violation: Summary withheld."
-        else:
-            print(f"⚠️ IPFS Gateway returned {response.status_code}. Using fallback.")
-            ai_summary = "IPFS Download Failed - Gateway Timeout."
-
-    except Exception as e:
-        print(f"❌ Network/Logic Error: {e}")
-        ai_summary = f"Error during processing: {str(e)}"
-
-    # WE MUST STILL WRITE TO THE FEED EVEN IF DOWNLOAD FAILS
-    print(f"📝 Writing to evidence_feed.json...")
-    
-    # Find the index (Optimized: use a fixed index or just 0 for demo if loop is slow)
+def _get_evidence_index(case_id: int) -> int:
     index = 0
     try:
         while True:
             contract.functions.caseRegistry(case_id, index).call()
             index += 1
-    except:
-        index = max(0, index - 1)
+    except Exception:
+        return max(0, index - 1)
 
-    _append_to_feed(
-        case_id, index, integrity_verified, ai_summary,
-        event.args.fileHash, cid,
-    )
-    print("✨ Feed updated successfully.")
 
-def log_loop():
-    print("🚀 JusticeVault Oracle: Active and Listening (Stateless Polling Mode)...")
-    
-    # 1. Initialize block tracker manually
+# ---------------------------------------------------------------------------
+# Event handlers
+# ---------------------------------------------------------------------------
+
+def handle_filed_event(event) -> None:
+    """EvidenceFiled — run the full pipeline through BRIEF_GENERATED, then pause."""
+    case_id = event.args.caseId
+    cid     = event.args.ipfsCid
+    print(f"\n--- 📂 EvidenceFiled: Case #{case_id} ---")
+
+    initial_state: PipelineState = {
+        "case_id":            case_id,
+        "ipfs_cid":           cid,
+        "file_hash":          event.args.fileHash,
+        "local_path":         "",
+        "status":             "RECEIVED",
+        "integrity_verified": False,
+        "pii_flags":          [],
+        "injection_detected": False,
+        "chunk_count":        0,
+        "ai_brief":           "",
+        "error":              "",
+    }
+
+    thread_cfg = {"configurable": {"thread_id": f"case_{case_id}"}}
     try:
-        # Get the current block number to start from
-        # last_processed_block = w3.eth.block_number
-        last_processed_block = 0
-        print(f"📊 Tracking started from block: {last_processed_block}")
-    except Exception as e:
-        print(f"❌ Connection Error: Is Anvil running at {RPC_URL}?")
+        # Graph runs to BRIEF_GENERATED then pauses (interrupt_before=["validate"])
+        result = pipeline_graph.invoke(initial_state, config=thread_cfg)
+    except Exception as exc:
+        print(f"❌ Pipeline error: {exc}")
+        result = {**initial_state, "status": "REJECTED", "error": str(exc)}
+
+    print(f"📝 Writing to feed (status: {result.get('status')})...")
+    _append_to_feed(result, _get_evidence_index(case_id))
+    print("✨ Feed updated.")
+
+
+def handle_validated_event(event) -> None:
+    """EvidenceValidated — resume the paused graph past the VALIDATE node."""
+    case_id = event.args.caseId
+    print(f"\n⚖️  EvidenceValidated: Case #{case_id} — resuming pipeline graph...")
+
+    thread_cfg = {"configurable": {"thread_id": f"case_{case_id}"}}
+    try:
+        result = pipeline_graph.invoke(None, config=thread_cfg)
+        print(f"✅ Pipeline complete. Status: {result.get('status')}")
+    except Exception as exc:
+        print(f"❌ Resume error for case #{case_id}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def log_loop() -> None:
+    print("🚀 JusticeVault Oracle: Active (LangGraph pipeline mode)...")
+    try:
+        last_block = 0
+        print(f"📊 Listening from block {last_block}")
+    except Exception as exc:
+        print(f"❌ Connection error — is Anvil running at {RPC_URL}? ({exc})")
         return
 
     while True:
         try:
-            # 2. Check the current tip of the chain
             current_block = w3.eth.block_number
+            if current_block > last_block:
+                from_b, to_b = last_block + 1, current_block
 
-            if current_block > last_processed_block:
-                # 3. Query logs directly via HTTP POST (Stateless)
-                # This replaces 'create_filter' entirely
-                events = contract.events.EvidenceFiled.get_logs(
-                    from_block=last_processed_block + 1,
-                    to_block=current_block
-                )
+                for event in contract.events.EvidenceFiled.get_logs(from_block=from_b, to_block=to_b):
+                    print(f"📦 EvidenceFiled in block {event['blockNumber']}")
+                    handle_filed_event(event)
 
-                for event in events:
-                    print(f"📦 New Evidence Found in Block {event['blockNumber']}!")
-                    handle_event(event)
-                
-                # Update our position
-                last_processed_block = current_block
+                for event in contract.events.EvidenceValidated.get_logs(from_block=from_b, to_block=to_b):
+                    print(f"⚖️  EvidenceValidated in block {event['blockNumber']}")
+                    handle_validated_event(event)
 
-            # 4. Wait 2 seconds before checking for new blocks
+                last_block = current_block
+
             time.sleep(2)
 
-        except Exception as e:
-            # If the error is the 'upgrade' ghost, we ignore it and retry
-            if "upgrade" in str(e).lower():
+        except Exception as exc:
+            if "upgrade" in str(exc).lower():
                 time.sleep(1)
                 continue
-            else:
-                print(f"⚠️ Loop Warning: {e}")
-                time.sleep(5)
+            print(f"⚠️  Loop warning: {exc}")
+            time.sleep(5)
+
 
 if __name__ == "__main__":
     log_loop()

@@ -1,5 +1,10 @@
 web3>=6.0.0
-google-genai
+anthropic>=0.40.0
+pypdf>=4.0.0
+chromadb[default]
+langchain-text-splitters
+langgraph>=0.2.0
+langsmith>=0.1.0
 requests
 python-dotenv
 streamlit>=1.28.0
