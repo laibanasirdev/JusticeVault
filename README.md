@@ -111,8 +111,8 @@ temp_legal_files/       # Scratch space for local demo PDFs (gitignored)
 
 - [Foundry](https://getfoundry.sh/) installed
 - Python 3.10+
-- A [Pinata](https://pinata.cloud) account for IPFS
-- A Google Gemini API key
+- A [Pinata](https://pinata.cloud) account for IPFS (uploads are manual via the Pinata dashboard/API — not yet wired into this codebase)
+- An [Anthropic API key](https://console.anthropic.com/) (Claude)
 
 ### 1. Clone and install
 
@@ -129,11 +129,18 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```
-CONTRACT_ADDRESS=   # filled after deploy step below
-GEMINI_API_KEY=     # from Google AI Studio
-PRIVATE_KEY=        # local Anvil account (never use a real funded wallet for dev)
-PINATA_JWT=         # from Pinata dashboard
+CONTRACT_ADDRESS=     # filled after deploy step below
+ANTHROPIC_API_KEY=    # from console.anthropic.com
+PRIVATE_KEY=          # local Anvil account (never use a real funded wallet for dev)
+RPC_URL=              # defaults to http://127.0.0.1:8545 (local Anvil)
+
+# Optional — LangSmith tracing for the pipeline
+LANGCHAIN_API_KEY=
+LANGCHAIN_TRACING_V2=
+LANGCHAIN_PROJECT=
 ```
+
+See [`.env.example`](.env.example) for the full template.
 
 > ⚠️ **Never commit your `.env` file.** It is gitignored by default. If you accidentally commit secrets, rotate them immediately and use `git filter-repo` to purge the history.
 
