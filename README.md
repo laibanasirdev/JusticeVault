@@ -40,7 +40,7 @@ Lawyer submits file  →  Hash stored on-chain  →  Oracle verifies integrity
 ## Key Features
 
 - **Tamper Detection** — SHA-256 fingerprint stored on-chain; any post-submission change triggers an automatic rejection before AI analysis begins
-- **AI Case Briefs** — Powered by Google Gemini 2.0; extracts Parties, Key Claims, Date of Incident, and Summary from any legal PDF
+- **AI Case Briefs** — Powered by Claude (Anthropic) via a LangGraph RAG pipeline; extracts Parties, Key Claims, Date of Incident, and Summary from any legal PDF, with guardrails for PII and prompt injection
 - **Role-Based Access** — Separate portals for Lawyers (submit), Judges (validate), and Admins (manage) with on-chain access control
 - **Full Audit Trail** — Every submission and validation is recorded as a blockchain event; nothing is off-chain or editable
 - **IPFS Document Storage** — Files are stored on decentralized infrastructure; no single point of failure or control
@@ -65,8 +65,8 @@ JusticeVault is jurisdiction-agnostic. It does not depend on any single legal sy
 | Layer | Technology | Role |
 |-------|------------|------|
 | **Integrity** | Solidity (Foundry) + Anvil | Evidence registry, role-based access control, on-chain events |
-| **Oracle** | Python + Web3.py | Listens for on-chain events, downloads from IPFS, verifies hash |
-| **Intelligence** | Google Gemini 2.0 | Generates structured Case Brief from verified PDF |
+| **Oracle** | Python + Web3.py + LangGraph | Listens for on-chain events, downloads from IPFS, verifies hash, runs the review pipeline |
+| **Intelligence** | Claude (Anthropic) + ChromaDB (RAG) | Chunks, embeds, and retrieves document context to generate a structured Case Brief |
 | **Storage** | IPFS (via Pinata) | Decentralized, censorship-resistant document storage |
 | **UI** | Streamlit | Lawyer, Judge, and Admin dashboards |
 
@@ -79,21 +79,29 @@ contracts/              # Solidity smart contracts (NatSpec documented)
 ├── JusticeVault.sol    # Evidence registry, roles, events
 
 scripts/
-├── monitor_vault.py    # Oracle: listens for events, triggers verification
+├── monitor_vault.py    # Oracle: listens for events, drives the pipeline
 ├── oracle_utils.py     # Hash verification, IPFS fetch utilities
 ├── streamlit_app.py    # Multi-role Streamlit dashboard
 ├── hash_evidence.py    # CLI tool: compute SHA-256 of a local PDF
 └── DeployJusticeVault.s.sol  # Foundry deploy script
 
-tests/
-├── JusticeVault.t.sol  # Foundry contract unit tests
-└── test_oracle.py      # Pytest: Oracle logic (verify_file_integrity)
+pipeline/               # LangGraph oracle pipeline
+├── graph.py            # State machine: receive → integrity → embed → analyze → brief → validate
+├── guardrails.py        # PII detection + prompt-injection defence
+├── rag.py               # Chunk/embed/retrieve (ChromaDB) + Claude brief generation
+└── observability.py     # LangSmith tracing config
 
-pipeline/               # CI/CD configuration
+tests/
+├── conftest.py         # Pytest fixtures
+├── test_oracle.py      # Pytest: Oracle logic (verify_file_integrity)
+├── run_evals.py        # LangSmith eval runner for the RAG pipeline
+└── eval_dataset.json   # Sample legal-brief eval cases
+
 .streamlit/             # Streamlit theme config
-docs/                   # ARCHITECTURE.md — system diagram and data flow
 temp_legal_files/       # Scratch space for local demo PDFs (gitignored)
 ```
+
+> Note: there are currently no Foundry contract tests (`forge test` will find none) — that's an open gap, not yet implemented.
 
 ---
 
@@ -180,12 +188,6 @@ pytest tests/
 - [ ] Document redaction detection (flag selectively obscured PDFs)
 - [ ] Webhook notifications for legal teams on submission and validation events
 - [ ] Enterprise SaaS packaging with tenant isolation
-
----
-
-## Architecture
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full system diagram and data flow.
 
 ---
 
